@@ -1,0 +1,218 @@
+# PowerShell Script for Windows
+
+# --- Configuration Section ---
+
+# Set variables for Obsidian to Hugo copy
+# This is the source folder where your Obsidian Markdown posts are located.
+$sourcePath = "C:\Users\cybrwlf\Documents\Obsidian Vault\posts-test"
+# This is the destination folder for your Hugo content (where the processed MD files go).
+$destinationPath = "C:\Users\cybrwlf\Documents\cybrwlfblog\content\posts"
+
+# Set Github repository URL
+# IMPORTANT: Replace with your actual GitHub repository URL (e.g., HTTPS or SSH)
+$myrepo = "git@github.com:your_username/cybrwlfblog.git" # <--- CHANGE THIS TO YOUR ACTUAL REPO URL
+# Example HTTPS: $myrepo = "https://github.com/your_username/cybrwlfblog.git"
+
+# --- Error Handling and Setup ---
+$ErrorActionPreference = "Stop" # Stop script execution on any error
+Set-StrictMode -Version Latest # Enable strict mode for better error detection
+
+# Change to the script's directory FIRST.
+# This ensures that 'images.py' is found correctly, and that Git/Hugo commands
+# are run from the expected location (assuming this script is in your blog's root).
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+Write-Host "Changing current directory to: $ScriptDir"
+Set-Location $ScriptDir
+
+# Now, define the Python script path relative to the current directory
+$pythonScriptPath = Join-Path $ScriptDir "images.py"
+
+# Check for required commands (git, hugo, python)
+$requiredCommands = @('git', 'hugo')
+
+# Check for Python command (python or python3)
+$pythonCommand = $null
+if (Get-Command 'python' -ErrorAction SilentlyContinue) {
+    $pythonCommand = 'python'
+} elseif (Get-Command 'python3' -ErrorAction SilentlyContinue) {
+    $pythonCommand = 'python3'
+} else {
+    Write-Error "Python is not installed or not in PATH. Please install Python or add it to your system PATH."
+    exit 1
+}
+
+foreach ($cmd in $requiredCommands) {
+    if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+        Write-Error "$cmd is not installed or not in PATH. Please install $cmd or add it to your system PATH."
+        exit 1
+    }
+}
+
+# --- Git Repository Initialization/Configuration ---
+# Check if Git is initialized, and initialize if necessary
+if (-not (Test-Path ".git")) {
+    Write-Host "Initializing Git repository..."
+    git init
+    Write-Host "Adding remote origin: $myrepo"
+    git remote add origin $myrepo
+} else {
+    Write-Host "Git repository already initialized."
+    $remotes = git remote
+    if (-not ($remotes -contains 'origin')) {
+        Write-Host "Adding remote origin: $myrepo"
+        git remote add origin $myrepo
+    } else {
+        Write-Host "Remote 'origin' already exists."
+        # Optional: Verify/update remote URL if it's different
+        # $currentOriginUrl = git remote get-url origin
+        # if ($currentOriginUrl -ne $myrepo) {
+        #     Write-Host "Warning: Remote origin URL is different. Updating..."
+        #     git remote set-url origin $myrepo
+        # }
+    }
+}
+
+# Pull latest changes from master before syncing to avoid merge conflicts later
+Write-Host "Pulling latest changes from Git 'master' branch..."
+try {
+    git pull origin master # <--- CHANGE 'master' to 'main' if that's your primary branch
+} catch {
+    Write-Error "Failed to pull latest changes from Git 'master' branch. Please resolve manually if needed."
+    # Decide if you want to exit here or continue with potential conflicts
+    # exit 1
+}
+
+
+# --- Core Workflow ---
+
+# Step 1: Sync posts from Obsidian to Hugo content folder using Robocopy
+Write-Host "Syncing posts from Obsidian: $sourcePath to $destinationPath"
+
+if (-not (Test-Path $sourcePath)) {
+    Write-Error "Source path does not exist: $sourcePath. Please verify your Obsidian posts folder."
+    exit 1
+}
+
+# Ensure destination path exists for Robocopy
+if (-not (Test-Path $destinationPath)) {
+    Write-Host "Destination path $destinationPath does not exist. Creating it."
+    New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
+}
+
+# Use Robocopy to mirror the directories
+# /MIR: Mirrors a directory tree (equivalent to /E /PURGE)
+# /Z: Restartable mode (for unreliable networks)
+# /W:5: Wait 5 seconds between retries
+# /R:3: Retry 3 times
+$robocopyOptions = @('/MIR', '/Z', '/W:5', '/R:3')
+Write-Host "Running Robocopy..."
+$robocopyResult = robocopy $sourcePath $destinationPath @robocopyOptions
+
+# Robocopy exit codes: 0-7 are success, 8+ are failures
+# See https://ss64.com/nt/robocopy.html for details on exit codes
+if ($LASTEXITCODE -ge 8) {
+    Write-Error "Robocopy failed with exit code $LASTEXITCODE. This indicates files could not be copied."
+    exit 1
+} elseif ($LASTEXITCODE -ge 1 -and $LASTEXITCODE -le 7) {
+    Write-Host "Robocopy completed with info/success code $LASTEXITCODE (e.g., some files copied, no critical errors)."
+} else {
+    Write-Host "Robocopy completed successfully with exit code $LASTEXITCODE."
+}
+
+
+# Step 2: Process Markdown files with Python script to handle image links
+Write-Host "Processing image links in Markdown files using Python script: $pythonScriptPath"
+if (-not (Test-Path $pythonScriptPath)) {
+    Write-Error "Python script '$pythonScriptPath' not found. This should not happen if the script is in the same directory. Please verify."
+    exit 1
+}
+
+# Execute the Python script
+try {
+    & $pythonCommand $pythonScriptPath
+} catch {
+    Write-Error "Failed to process image links with Python script. Error: $($Error[0].Exception.Message)"
+    exit 1
+}
+
+# Step 3: Build the Hugo site
+Write-Host "Building the Hugo site..."
+# Current directory is already set to the script's directory, which should be the Hugo blog root.
+try {
+    hugo
+} catch {
+    Write-Error "Hugo build failed. Error: $($Error[0].Exception.Message). Ensure you are in the correct directory for Hugo."
+    exit 1
+}
+
+# --- Git Operations ---
+
+# Step 4: Add changes to Git
+Write-Host "Staging changes for Git..."
+$hasChanges = (git status --porcelain) -ne ""
+if (-not $hasChanges) {
+    Write-Host "No unstaged changes detected. Skipping 'git add .'."
+} else {
+    git add .
+    Write-Host "All changes staged."
+}
+
+# Step 5: Commit changes with a dynamic message
+$commitMessage = "Automated Blog Update on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+$hasStagedChanges = (git diff --cached --name-only) -ne "" # Check if there are changes in the staging area
+if (-not $hasStagedChanges) {
+    Write-Host "No staged changes to commit."
+} else {
+    Write-Host "Committing changes with message: '$commitMessage'"
+    git commit -m "$commitMessage"
+}
+
+# Step 6: Push all changes to the main branch
+Write-Host "Deploying primary changes to GitHub 'master' branch..."
+try {
+    git push origin master # <--- CHANGE 'master' to 'main' if that's your primary branch
+    Write-Host "Pushed to 'master' branch successfully."
+} catch {
+    Write-Error "Failed to push to 'master' branch. Error: $($Error[0].Exception.Message)"
+    exit 1
+}
+
+# Step 7: Push the public folder to the hostinger branch using subtree split and force push
+Write-Host "Deploying 'public' folder to GitHub 'hostinger' branch..."
+
+# Check if the temporary branch exists and delete it
+$tempBranchName = "deploy_public_temp" # Using a more descriptive temp branch name
+$branchExists = git branch --list "$tempBranchName"
+if ($branchExists) {
+    Write-Host "Deleting old temporary branch '$tempBranchName'..."
+    git branch -D $tempBranchName
+}
+
+# Perform subtree split
+# Current directory is already set to the script's directory, which should be the Hugo blog root.
+Write-Host "Performing git subtree split for 'public' folder..."
+try {
+    git subtree split --prefix public -b $tempBranchName
+    Write-Host "Subtree split completed."
+} catch {
+    Write-Error "Subtree split failed. Error: $($Error[0].Exception.Message). Ensure 'public' folder exists after Hugo build."
+    exit 1
+}
+
+# Push to hostinger branch with force
+Write-Host "Force pushing 'public' folder to 'hostinger' branch..."
+try {
+    git push origin $tempBranchName:hostinger --force
+    Write-Host "Pushed to 'hostinger' branch successfully."
+} catch {
+    Write-Error "Failed to force push to 'hostinger' branch. Error: $($Error[0].Exception.Message)"
+    # Attempt to clean up the temporary branch even if push fails
+    git branch -D $tempBranchName
+    exit 1
+}
+
+# Delete the temporary branch
+Write-Host "Deleting temporary branch '$tempBranchName'..."
+git branch -D $tempBranchName
+
+Write-Host "All done! Site synced, processed, committed, built, and deployed."

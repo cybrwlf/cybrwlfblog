@@ -9,6 +9,13 @@
     <lastBuildDate>Fri, 06 Jun 2025 00:00:00 +0000</lastBuildDate>
     <atom:link href="/tags/blog/index.xml" rel="self" type="application/rss+xml" />
     <item>
+      <title>Lessons Learned</title>
+      <link>/posts/lessons-learned/index.html</link>
+      <pubDate>Fri, 06 Jun 2025 00:00:00 +0000</pubDate>
+      <guid>/posts/lessons-learned/index.html</guid>
+      <description>Lessons Learned This post documents the challenges and solutions encountered while updating the automation scripts for my Hugo blog. The goal was to streamline the process of moving notes from Obsidian to Hugo and then deploying them to GitHub, including handling images.&#xA;Initial Setup &amp; The Mysterious Missing Images When I first set up the script, everything seemed okay, but images weren’t showing up on the deployed site. I’d embed them in Obsidian like this: ![[20240103Capture2.jpg]].</description>
+    </item>
+    <item>
       <title>Test First Post</title>
       <link>/posts/test-first-post/index.html</link>
       <pubDate>Fri, 06 Jun 2025 00:00:00 +0000</pubDate>
